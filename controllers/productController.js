@@ -2,13 +2,104 @@ const Product = require("../models/productModel");
 const ErrorHander = require("../utils/errorhander");
 const catchAsyncErrors = require("../middleware/catchAsyncErrors");
 const ApiFeatures = require("../utils/apifeatures");
-const cloudinary = require("cloudinary");
+const cloudinary = require("cloudinary").v2;
+const streamifier = require("streamifier");
+const { Readable } = require("stream");
+const { Dataurl } = require("../utils/DataUrlParser");
+const fs = require("fs/promises");
+const path = require("path");
+const Features = require("../utils/DynamicSearch");
+exports.SearchProductsV2 = catchAsyncErrors(async (req, res, next) => {
+  const resultPerPage = 8;
+  const productsCount = await Product.countDocuments();
+  const apiFeature = new ApiFeatures(Product.find(), req.query)
+    .search()
+    .filter();
 
+  let products = await apiFeature.query;
+  let filteredProductsCount = products.length;
+  apiFeature.pagination(resultPerPage);
+
+  products = await apiFeature.query;
+
+  res.status(200).json({
+    success: true,
+    products,
+    productsCount,
+    resultPerPage,
+    filteredProductsCount
+  });
+});
+async function deleteAllFilesInDir(dirPath) {
+  try {
+    const files = await fs.readdir(dirPath);
+
+    const deleteFilePromises = files.map((file) =>
+      fs.unlink(path.join(dirPath, file))
+    );
+
+    await Promise.all(deleteFilePromises);
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+async function uploadAndSaveImages(imageFiles) {
+  try {
+    const uploadPromises = imageFiles.map((imageFile) =>
+      cloudinary.uploader.upload(imageFile.path)
+    );
+
+    const uploadedImages = await Promise.all(uploadPromises);
+
+    const imagesToSave = uploadedImages.map((uploadedImage) => ({
+      public_id: uploadedImage.public_id,
+      url: uploadedImage.secure_url
+    }));
+
+    deleteAllFilesInDir("./uploads").then(() => {
+      console.log("Removed all files from the specified directory");
+    });
+    console.log(imagesToSave);
+    return imagesToSave;
+  } catch (error) {
+    console.error("Error uploading and saving images:", error);
+    throw error;
+  }
+}
+
+const uploadImage = async (image) => {
+  let link = {};
+  let cld_upload_stream = cloudinary.uploader.upload_stream(
+    {
+      folder: "products"
+    },
+    async (error, result) => {
+      console.log(result.url);
+      console.log(result.secure_url);
+    }
+  );
+  // console.log(cld_upload_stream, "aaa");
+  return streamifier.createReadStream(image.data).pipe(cld_upload_stream);
+};
+exports.CreateProductV2 = catchAsyncErrors(async (req, res, next) => {
+  let links = await uploadAndSaveImages(req.files);
+  console.log(links);
+
+  req.body.images = links;
+  req.body.user = req.user.id;
+
+  const product = await Product.create(req.body);
+  res.status(201).json({
+    success: true,
+    product
+  });
+});
 // Create Product -- Admin
 exports.createProduct = catchAsyncErrors(async (req, res, next) => {
   let images = [];
 
-  console.log(req.body.images,'212121')
+  console.log(req.body.images, "212121");
 
   if (typeof req.body.images === "string") {
     images.push(req.body.images);
@@ -19,13 +110,13 @@ exports.createProduct = catchAsyncErrors(async (req, res, next) => {
   const imagesLinks = [];
 
   for (let i = 0; i < images.length; i++) {
-    const result = await cloudinary.v2.uploader.upload(images[i], {
-      folder: "products",
+    const result = await cloudinary.uploader.upload(images[i], {
+      folder: "products"
     });
 
     imagesLinks.push({
       public_id: result.public_id,
-      url: result.secure_url,
+      url: result.secure_url
     });
   }
 
@@ -36,7 +127,7 @@ exports.createProduct = catchAsyncErrors(async (req, res, next) => {
 
   res.status(201).json({
     success: true,
-    product,
+    product
   });
 });
 
@@ -62,7 +153,7 @@ exports.getAllProducts = catchAsyncErrors(async (req, res, next) => {
     products,
     productsCount,
     resultPerPage,
-    filteredProductsCount,
+    filteredProductsCount
   });
 });
 
@@ -72,7 +163,7 @@ exports.getAdminProducts = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    products,
+    products
   });
 });
 
@@ -86,7 +177,7 @@ exports.getProductDetails = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    product,
+    product
   });
 });
 
@@ -111,34 +202,23 @@ exports.updateProduct = catchAsyncErrors(async (req, res, next) => {
   if (images !== undefined) {
     // Deleting Images From Cloudinary
     for (let i = 0; i < product.images.length; i++) {
-      await cloudinary.v2.uploader.destroy(product.images[i].public_id);
+      await cloudinary.uploader.destroy(product.images[i].public_id);
     }
+    let links = await uploadAndSaveImages(req.files);
+    console.log(links);
 
-    const imagesLinks = [];
-
-    for (let i = 0; i < images.length; i++) {
-      const result = await cloudinary.v2.uploader.upload(images[i], {
-        folder: "products",
-      });
-
-      imagesLinks.push({
-        public_id: result.public_id,
-        url: result.secure_url,
-      });
-    }
-
-    req.body.images = imagesLinks;
+    req.body.images = links;
   }
 
   product = await Product.findByIdAndUpdate(req.params.id, req.body, {
     new: true,
     runValidators: true,
-    useFindAndModify: false,
+    useFindAndModify: false
   });
 
   res.status(200).json({
     success: true,
-    product,
+    product
   });
 });
 
@@ -153,14 +233,14 @@ exports.deleteProduct = catchAsyncErrors(async (req, res, next) => {
 
   // Deleting Images From Cloudinary
   for (let i = 0; i < product.images.length; i++) {
-    await cloudinary.v2.uploader.destroy(product.images[i].public_id);
+    await cloudinary.uploader.destroy(product.images[i].public_id);
   }
 
   await product.remove();
 
   res.status(200).json({
     success: true,
-    message: "Product Delete Successfully",
+    message: "Product Delete Successfully"
   });
 });
 
@@ -172,7 +252,7 @@ exports.createProductReview = catchAsyncErrors(async (req, res, next) => {
     user: req.user._id,
     name: req.user.name,
     rating: Number(rating),
-    comment,
+    comment
   };
 
   const product = await Product.findById(productId);
@@ -202,7 +282,7 @@ exports.createProductReview = catchAsyncErrors(async (req, res, next) => {
   await product.save({ validateBeforeSave: false });
 
   res.status(200).json({
-    success: true,
+    success: true
   });
 });
 
@@ -216,7 +296,7 @@ exports.getProductReviews = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    reviews: product.reviews,
+    reviews: product.reviews
   });
 });
 
@@ -253,16 +333,16 @@ exports.deleteReview = catchAsyncErrors(async (req, res, next) => {
     {
       reviews,
       ratings,
-      numOfReviews,
+      numOfReviews
     },
     {
       new: true,
       runValidators: true,
-      useFindAndModify: false,
+      useFindAndModify: false
     }
   );
 
   res.status(200).json({
-    success: true,
+    success: true
   });
 });

@@ -4,21 +4,52 @@ const User = require("../models/userModel");
 const sendToken = require("../utils/jwtToken");
 const sendEmail = require("../utils/sendEmail");
 const crypto = require("crypto");
-const cloudinary = require("cloudinary");
+const cloudinary = require("cloudinary").v2;
+const fs = require("fs/promises");
+const path = require("path");
+async function deleteAllFilesInDir(dirPath) {
+  try {
+    const files = await fs.readdir(dirPath);
+
+    const deleteFilePromises = files.map((file) =>
+      fs.unlink(path.join(dirPath, file))
+    );
+
+    await Promise.all(deleteFilePromises);
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+async function uploadAndSaveImages(imageFiles) {
+  try {
+    const uploadPromises = imageFiles.map((imageFile) =>
+      cloudinary.uploader.upload(imageFile.path)
+    );
+
+    const uploadedImages = await Promise.all(uploadPromises);
+
+    const imagesToSave = uploadedImages.map((uploadedImage) => ({
+      public_id: uploadedImage.public_id,
+      url: uploadedImage.secure_url
+    }));
+
+    deleteAllFilesInDir("./uploads").then(() => {
+      console.log("Removed all files from the specified directory");
+    });
+    console.log(imagesToSave)
+    return imagesToSave;
+  } catch (error) {
+    console.error("Error uploading and saving images:", error);
+    throw error;
+  }
+}
 
 // Register a User
 exports.registerUser = catchAsyncErrors(async (req, res, next) => {
-  // const myCloud = await cloudinary.v2.uploader.upload(req.body.frontcnic, {
-  //   folder: "cnic",
-  //   width: 150,
-  //   crop: "scale",
-  // });
-  // const myCloud1 = await cloudinary.v2.uploader.upload(req.body.backcnic, {
-  //   folder: "cnic",
-  //   width: 150,
-  //   crop: "scale",
-  // });
-
+  console.log(req.files);
+  const myCloud = await uploadAndSaveImages(req.files.frontcnic)
+  const myCloud1 =await uploadAndSaveImages(req.files.backcnic)
   const { name,lastname, email,city,cnic,phone,company,notes,address, password } = req.body;
 
   const user = await User.create({
@@ -32,17 +63,21 @@ exports.registerUser = catchAsyncErrors(async (req, res, next) => {
     notes,
     address,
     password,
-    // frontcnic: {
-    //   public_id: myCloud.public_id,
-    //   url: myCloud.secure_url,
-    // },
-    // backcnic: {
-    //   public_id: myCloud.public_id,
-    //   url: myCloud1.secure_url,
-    // },
+    frontcnic: {
+      public_id: myCloud[0].public_id,
+      url: myCloud[0].url,
+    },
+    backcnic: {
+      public_id: myCloud1[0].public_id,
+      url: myCloud1[0].url,
+    },
   });
 
   sendToken(user, 201, res);
+  // res.status(200).json({
+  //   success: true,
+  //   abc: req.files
+  // });
 });
 
 // Login User
@@ -74,12 +109,12 @@ exports.loginUser = catchAsyncErrors(async (req, res, next) => {
 exports.logout = catchAsyncErrors(async (req, res, next) => {
   res.cookie("token", null, {
     expires: new Date(Date.now()),
-    httpOnly: true,
+    httpOnly: true
   });
 
   res.status(200).json({
     success: true,
-    message: "Logged Out",
+    message: "Logged Out"
   });
 });
 
@@ -106,12 +141,12 @@ exports.forgotPassword = catchAsyncErrors(async (req, res, next) => {
     await sendEmail({
       email: user.email,
       subject: `Ecommerce Password Recovery`,
-      message,
+      message
     });
 
     res.status(200).json({
       success: true,
-      message: `Email sent to ${user.email} successfully`,
+      message: `Email sent to ${user.email} successfully`
     });
   } catch (error) {
     user.resetPasswordToken = undefined;
@@ -133,7 +168,7 @@ exports.resetPassword = catchAsyncErrors(async (req, res, next) => {
 
   const user = await User.findOne({
     resetPasswordToken,
-    resetPasswordExpire: { $gt: Date.now() },
+    resetPasswordExpire: { $gt: Date.now() }
   });
 
   if (!user) {
@@ -164,7 +199,7 @@ exports.getUserDetails = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    user,
+    user
   });
 });
 
@@ -193,7 +228,7 @@ exports.updatePassword = catchAsyncErrors(async (req, res, next) => {
 exports.updateProfile = catchAsyncErrors(async (req, res, next) => {
   const newUserData = {
     name: req.body.name,
-    email: req.body.email,
+    email: req.body.email
   };
 
   if (req.body.avatar !== "") {
@@ -201,28 +236,28 @@ exports.updateProfile = catchAsyncErrors(async (req, res, next) => {
 
     const imageId = user.avatar.public_id;
 
-    await cloudinary.v2.uploader.destroy(imageId);
+    await cloudinary.uploader.destroy(imageId);
 
-    const myCloud = await cloudinary.v2.uploader.upload(req.body.avatar, {
+    const myCloud = await cloudinary.uploader.upload(req.body.avatar, {
       folder: "avatars",
       width: 150,
-      crop: "scale",
+      crop: "scale"
     });
 
     newUserData.avatar = {
       public_id: myCloud.public_id,
-      url: myCloud.secure_url,
+      url: myCloud.secure_url
     };
   }
 
   const user = await User.findByIdAndUpdate(req.user.id, newUserData, {
     new: true,
     runValidators: true,
-    useFindAndModify: false,
+    useFindAndModify: false
   });
 
   res.status(200).json({
-    success: true,
+    success: true
   });
 });
 
@@ -232,7 +267,7 @@ exports.getAllUser = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    users,
+    users
   });
 });
 
@@ -248,7 +283,7 @@ exports.getSingleUser = catchAsyncErrors(async (req, res, next) => {
 
   res.status(200).json({
     success: true,
-    user,
+    user
   });
 });
 
@@ -257,17 +292,17 @@ exports.updateUserRole = catchAsyncErrors(async (req, res, next) => {
   const newUserData = {
     name: req.body.name,
     email: req.body.email,
-    role: req.body.role,
+    role: req.body.role
   };
 
   await User.findByIdAndUpdate(req.params.id, newUserData, {
     new: true,
     runValidators: true,
-    useFindAndModify: false,
+    useFindAndModify: false
   });
 
   res.status(200).json({
-    success: true,
+    success: true
   });
 });
 
@@ -283,12 +318,12 @@ exports.deleteUser = catchAsyncErrors(async (req, res, next) => {
 
   const imageId = user.avatar.public_id;
 
-  await cloudinary.v2.uploader.destroy(imageId);
+  await cloudinary.uploader.destroy(imageId);
 
   await user.remove();
 
   res.status(200).json({
     success: true,
-    message: "User Deleted Successfully",
+    message: "User Deleted Successfully"
   });
 });
